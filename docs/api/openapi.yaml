@@ -1,0 +1,432 @@
+openapi: 3.0.3
+info:
+  title: TechByte Service Desk API
+  version: 1.0.0
+  description: |
+    API Contract cho hệ thống **TechByte Service Desk** (Spring Boot 3.3 / Java 21).
+    - **Xác thực:** JWT Bearer Token (`Authorization: Bearer <token>`).
+    - **Phân quyền 3 Roles:** `STAFF`, `TECHNICIAN`, `ADMIN`.
+    - **Chuyển trạng thái hợp lệ:** `OPEN -> IN_PROGRESS -> RESOLVED -> CLOSED` (không hủy ngang, mọi chuyển đổi trái phép trả `400 Bad Request`).
+    - **Dashboard:** `completed = resolved + closed`.
+servers:
+  - url: http://localhost:8080
+    description: Local Development Server
+  - url: https://domain.example.com
+    description: Production Server (via Cloudflare + Nginx)
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Role:
+      type: string
+      enum: [STAFF, TECHNICIAN, ADMIN]
+
+    TicketStatus:
+      type: string
+      enum: [OPEN, IN_PROGRESS, RESOLVED, CLOSED]
+
+    TicketPriority:
+      type: string
+      enum: [LOW, MEDIUM, HIGH, URGENT]
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              example: BAD_REQUEST
+            message:
+              type: string
+              example: Không thể chuyển trạng thái từ OPEN sang CLOSED
+            details:
+              type: array
+              items:
+                type: string
+
+    UserSummary:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+        email:
+          type: string
+          example: staff1@techbyte.vn
+        full_name:
+          type: string
+          example: Nguyễn Văn A
+        role:
+          $ref: '#/components/schemas/Role'
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          example: admin@techbyte.vn
+        password:
+          type: string
+          example: Admin@123
+
+    LoginResponse:
+      type: object
+      properties:
+        accessToken:
+          type: string
+        user:
+          $ref: '#/components/schemas/UserSummary'
+
+    CreateTicketRequest:
+      type: object
+      required: [title, description]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+          example: Lỗi 502 khi truy cập cổng thanh toán
+        description:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          example: Khách hàng báo lỗi 502 Bad Gateway từ 09:30 sáng nay.
+        priority:
+          $ref: '#/components/schemas/TicketPriority'
+
+    UpdateTicketRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        priority:
+          $ref: '#/components/schemas/TicketPriority'
+
+    AssignTicketRequest:
+      type: object
+      required: [assigned_to]
+      properties:
+        assigned_to:
+          type: integer
+          format: int64
+          example: 3
+
+    UpdateStatusRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          $ref: '#/components/schemas/TicketStatus'
+
+    CreateCommentRequest:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          example: Đã kiểm tra log Nginx, đang tiến hành xử lý.
+
+    DashboardSummaryResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+          example: 20
+        open:
+          type: integer
+          example: 5
+        in_progress:
+          type: integer
+          example: 7
+        resolved:
+          type: integer
+          example: 3
+        closed:
+          type: integer
+          example: 5
+        completed:
+          type: integer
+          description: Tổng số ticket hoàn thành (RESOLVED + CLOSED)
+          example: 8
+
+security:
+  - bearerAuth: []
+
+paths:
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      summary: Đăng nhập nhận JWT token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Đăng nhập thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          description: Dữ liệu đầu vào thiếu hoặc sai định dạng
+        '401':
+          description: Sai email hoặc mật khẩu
+
+  /api/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Đăng xuất khỏi phiên hiện tại
+      responses:
+        '200':
+          description: Đăng xuất thành công
+
+  /api/me:
+    get:
+      tags: [Auth]
+      summary: Lấy thông tin người dùng hiện tại
+      responses:
+        '200':
+          description: Thông tin người dùng
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSummary'
+        '401':
+          description: Chưa đăng nhập hoặc token hết hạn
+
+  /api/tickets:
+    get:
+      tags: [Tickets]
+      summary: Danh sách ticket (tự động giới hạn theo Role, hỗ trợ tìm kiếm & lọc)
+      parameters:
+        - in: query
+          name: search
+          schema:
+            type: string
+          description: Tìm theo mã code hoặc tiêu đề
+        - in: query
+          name: status
+          schema:
+            $ref: '#/components/schemas/TicketStatus'
+        - in: query
+          name: priority
+          schema:
+            $ref: '#/components/schemas/TicketPriority'
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 10
+      responses:
+        '200':
+          description: Danh sách ticket theo phạm vi quyền
+    post:
+      tags: [Tickets]
+      summary: Tạo ticket mới (STAFF, ADMIN)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTicketRequest'
+      responses:
+        '201':
+          description: Tạo ticket thành công
+        '400':
+          description: Thiếu tiêu đề hoặc mô tả vượt quá 2000 ký tự
+        '403':
+          description: TECHNICIAN không có quyền tạo ticket
+
+  /api/tickets/{id}:
+    get:
+      tags: [Tickets]
+      summary: Xem chi tiết ticket kèm bình luận và lịch sử trạng thái
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Chi tiết ticket
+        '403':
+          description: Không có quyền xem ticket ngoài phạm vi
+        '404':
+          description: Không tìm thấy ticket
+    patch:
+      tags: [Tickets]
+      summary: Cập nhật tiêu đề, mô tả, độ ưu tiên của ticket
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTicketRequest'
+      responses:
+        '200':
+          description: Cập nhật thành công
+        '400':
+          description: Dữ liệu không hợp lệ hoặc trạng thái ticket không cho phép sửa
+        '403':
+          description: Không có quyền sửa ticket
+    delete:
+      tags: [Tickets]
+      summary: Xóa ticket (Chỉ ADMIN, chỉ xóa được khi trạng thái đang OPEN)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Xóa thành công
+        '400':
+          description: Không thể xóa ticket đã đi vào xử lý (khác OPEN)
+        '403':
+          description: Không đủ quyền ADMIN
+
+  /api/tickets/{id}/assign:
+    patch:
+      tags: [Tickets]
+      summary: Phân công kỹ thuật viên xử lý (Chỉ ADMIN)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssignTicketRequest'
+      responses:
+        '200':
+          description: Phân công thành công
+        '400':
+          description: Người được gán không tồn tại hoặc không phải TECHNICIAN
+        '403':
+          description: Chỉ ADMIN được phép phân công
+
+  /api/tickets/{id}/status:
+    patch:
+      tags: [Tickets]
+      summary: Chuyển trạng thái ticket và ghi lịch sử trong cùng Transaction
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateStatusRequest'
+      responses:
+        '200':
+          description: Đổi trạng thái thành công
+        '400':
+          description: Chuyển trạng thái không hợp lệ (ví dụ OPEN -> CLOSED)
+        '403':
+          description: Không có quyền đổi trạng thái trên ticket này
+
+  /api/tickets/{id}/comments:
+    post:
+      tags: [Tickets]
+      summary: Thêm bình luận vào ticket
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCommentRequest'
+      responses:
+        '201':
+          description: Thêm bình luận thành công
+        '400':
+          description: Nội dung bình luận rỗng hoặc vượt quá giới hạn
+        '403':
+          description: Không có quyền bình luận vào ticket ngoài phạm vi
+
+  /api/dashboard/summary:
+    get:
+      tags: [Dashboard]
+      summary: Thống kê số lượng ticket từ DB (completed = resolved + closed)
+      responses:
+        '200':
+          description: Thống kê thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardSummaryResponse'
+
+  /health:
+    get:
+      tags: [Infra]
+      summary: Kiểm tra tiến trình Backend còn sống (Liveness)
+      security: []
+      responses:
+        '200':
+          description: UP
+
+  /ready:
+    get:
+      tags: [Infra]
+      summary: Kiểm tra khả năng phục vụ và kết nối Database (Readiness)
+      security: []
+      responses:
+        '200':
+          description: READY (Database UP)
+        '503':
+          description: NOT_READY (Database DOWN)
+
