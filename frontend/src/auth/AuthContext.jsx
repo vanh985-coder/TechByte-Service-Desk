@@ -1,19 +1,20 @@
-import { createContext, useContext, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import * as authApi from '../api/auth';
-
-const AuthCtx = createContext(null);
+import { AuthCtx } from './context';
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => Boolean(localStorage.getItem('token')));
 
   useEffect(() => {
     const token = localStorage.getItem('token');
-    if (!token) { setLoading(false); return; }
+    if (!token) return;
+    let active = true;
     authApi.getMe()
-      .then(setUser)
+      .then(user => { if (active) setUser(user); })
       .catch(() => localStorage.removeItem('token'))
-      .finally(() => setLoading(false));
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, []);
 
   async function doLogin(username, password) {
@@ -34,5 +35,3 @@ export function AuthProvider({ children }) {
     </AuthCtx.Provider>
   );
 }
-
-export const useAuth = () => useContext(AuthCtx);

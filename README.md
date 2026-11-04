@@ -19,3 +19,9 @@ origin TLS and troubleshooting. Nginx runs in the `reverse-proxy` container on t
 Both Dockerfiles use the repository root as build context. Database migrations
 are included in the backend image and applied with Flyway before schema validation.
 Database state persists in `db_volume`. Production demo seed is disabled.
+
+## CI/CD
+
+See [CI/CD setup and release runbook](docs/deployment.md). The workflow is
+`.github/workflows/deploy.yml`: `dang` pushes and PRs run CI; `main` publishes
+versioned GHCR images and deploys to the Ubuntu VPS over SSH.

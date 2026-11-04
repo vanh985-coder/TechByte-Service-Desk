@@ -1,9 +1,11 @@
-import { api } from './client';
+import { api } from './client.js';
+import { userFromApi } from './contract.js';
 
-export async function login(username, password) {
-  const { data } = await api.post('/auth/login', { username, password });
-  if (data.token) localStorage.setItem('token', data.token);
-  return data.user ?? data;
+export async function login(email, password) {
+  const { data } = await api.post('/auth/login', { email: email.trim(), password });
+  if (!data.accessToken || !data.user) throw new Error('Phản hồi đăng nhập không hợp lệ.');
+  localStorage.setItem('token', data.accessToken);
+  return userFromApi(data.user);
 }
 
 export async function logout() {
@@ -14,5 +16,5 @@ export async function logout() {
 export async function getMe() {
   // Sửa từ '/auth/me' thành '/me' theo đúng contract
   const { data } = await api.get('/me');
-  return data;
+  return userFromApi(data);
 }

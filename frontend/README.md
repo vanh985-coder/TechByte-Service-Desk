@@ -1,22 +1,33 @@
-# TechByte Service Desk - Frontend
+# TechByte Service Desk — Frontend
 
-Đây là phần Frontend của dự án **TechByte Service Desk**, được xây dựng bằng ReactJS. 
-Giao diện cung cấp các luồng nghiệp vụ cốt lõi (P0) giúp người dùng đăng nhập, quản lý, theo dõi và xử lý ticket.
+React 19, React Router 7, Vite 8 và Axios. Phiên bản dependencies được khóa trong
+`package-lock.json`; Node 22 (từ 22.12 trở lên) được dùng trong Docker và CI.
 
-## 🚀 Công nghệ sử dụng
-- **Framework:** React 18 (khởi tạo bằng Vite)
-- **Routing:** React Router DOM v6
-- **Gọi API:** Axios (có cấu hình Interceptors xử lý Token và lỗi 401)
-- **Styling:** Vanilla CSS (CSS thuần)
-- **Ngôn ngữ:** JavaScript (ES6+)
+## Chạy frontend để phát triển
 
-## 📦 Yêu cầu hệ thống
-- **Node.js** (khuyến nghị phiên bản 18.x hoặc 20.x trở lên)
-- **npm** (đi kèm khi cài Node.js)
-
-## ⚙️ Hướng dẫn cài đặt và chạy Local
-
-**1. Clone source code và di chuyển vào thư mục frontend:**
 ```bash
-git clone https://github.com/vanh985-coder/TechByte-Service-Desk.git
-cd TechByte-Service-Desk/frontend
+cd frontend
+npm ci
+npm run dev
+```
+
+Vite dùng cổng 5173 và proxy `/api` tới backend ở `http://localhost:8080`.
+Đây là Vite dev server, không yêu cầu cấu hình Nginx trên máy phát triển.
+
+```bash
+npm run lint
+npm run test:ci
+npm run build
+```
+
+API đăng nhập nhận `email`/`password`, trả `accessToken` và `user`. Các adapter trong
+`src/api/contract.js` ánh xạ response snake_case của backend cho giao diện. Lịch sử
+và bình luận được lấy trong response chi tiết ticket, không gọi endpoint riêng.
+
+## Triển khai trên VPS
+
+Dùng `frontend/Dockerfile` với build context là root repository. Bản React production
+được build với API `/api`, cùng origin với giao diện; Nginx phục vụ thư mục `dist`
+và fallback về `index.html` cho React Router.
+
+Xem [Docker/Nginx trên VPS](../docs/nginx-server.md) và [CI/CD](../docs/deployment.md).

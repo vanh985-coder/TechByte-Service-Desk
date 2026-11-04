@@ -20,7 +20,14 @@ export default function DashboardPage() {
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    let active = true;
+    getDashboardSummary()
+      .then(data => { if (active) setData(data); })
+      .catch(error => { if (active) setError(error.message); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, []);
 
   if (loading) return <Loading label="Đang tải số liệu..." />;
   if (error)   return <ErrorBox message={error} onRetry={load} />;
@@ -30,7 +37,7 @@ export default function DashboardPage() {
     { key: 'total',       label: 'Tổng ticket',  value: data?.total ?? 0,       color: '#1f2937' },
     { key: 'open',        label: 'Đang mở',      value: data?.open ?? 0,        color: '#1d4ed8' },
     { key: 'in_progress', label: 'Đang xử lý',   value: data?.in_progress ?? 0, color: '#d97706' },
-    { key: 'done',        label: 'Hoàn thành',   value: data?.done ?? 0,        color: '#059669' },
+    { key: 'completed',   label: 'Hoàn thành',   value: data?.completed ?? 0,   color: '#059669' },
   ];
 
   return (

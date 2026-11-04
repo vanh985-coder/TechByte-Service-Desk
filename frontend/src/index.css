@@ -283,7 +283,8 @@ a:hover {
 }
 .badge.open { background: #eff6ff; color: #1e40af; }
 .badge.in_progress { background: #fef3c7; color: #92400e; }
-.badge.done { background: #ecfdf5; color: #065f46; }
+.badge.resolved { background: #ecfdf5; color: #065f46; }
+.badge.closed { background: #f3f4f6; color: #374151; }
 
 /* ==========================================================================
    8. RESPONSIVE (Dành cho màn hình nhỏ)

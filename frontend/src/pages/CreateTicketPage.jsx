@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createTicket } from '../api/tickets';
+import { useAuth } from '../auth/context';
 
 const PRIORITIES = [
   { value: 'low', label: 'Thấp' },
@@ -11,6 +12,7 @@ const PRIORITIES = [
 
 export default function CreateTicketPage() {
   const nav = useNavigate();
+  const { user } = useAuth();
   
   // State lưu dữ liệu nhập vào
   const [title, setTitle] = useState('');
@@ -32,7 +34,7 @@ export default function CreateTicketPage() {
     else if (t.length > 200) e.title = 'Tiêu đề tối đa 200 ký tự.';
 
     if (!d) e.description = 'Mô tả không được để trống.';
-    else if (d.length > 5000) e.description = 'Mô tả tối đa 5000 ký tự.';
+    else if (d.length > 2000) e.description = 'Mô tả tối đa 2000 ký tự.';
 
     setErrors(e);
     return Object.keys(e).length === 0; // Trả về true nếu không có lỗi
@@ -48,7 +50,7 @@ export default function CreateTicketPage() {
     setSubmitting(true);
     try {
       // Gọi API thật (hoặc mock)
-      const created = await createTicket({ 
+      await createTicket({
         title: title.trim(), 
         description: description.trim(), 
         priority 
@@ -63,6 +65,10 @@ export default function CreateTicketPage() {
     } finally {
       setSubmitting(false);
     }
+  }
+
+  if (!['ADMIN', 'STAFF'].includes(user?.role)) {
+    return <p className="err">Bạn không có quyền tạo ticket.</p>;
   }
 
   return (
@@ -98,10 +104,10 @@ export default function CreateTicketPage() {
               value={description} 
               onChange={e => setDescription(e.target.value)}
               placeholder="Mô tả chi tiết sự cố hoặc yêu cầu..."
-              maxLength={5000}
+              maxLength={2000}
             />
             <div className="form-hint">
-              <span>{description.length}/5000 ký tự</span>
+              <span>{description.length}/2000 ký tự</span>
             </div>
             {errors.description && <p className="err">{errors.description}</p>}
           </div>

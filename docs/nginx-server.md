@@ -162,8 +162,8 @@ docker build -f backend/Dockerfile -t techbyte-backend:local .
 
 Với CI/CD, đặt `FRONTEND_IMAGE` và `BACKEND_IMAGE` thành image SHA/digest từ registry,
 pull image và chạy `dc up -d --no-build --wait`. Migrations vẫn đi cùng backend image.
-Khi ghép lại workflow cũ, đổi PostgreSQL CI sang 16 và kiểm tra readiness `READY`
-theo backend thật, đồng thời thống nhất test profile với nhóm BE.
+Workflow `.github/workflows/deploy.yml` dùng PostgreSQL 16 và readiness `READY`;
+xem [hướng dẫn CI/CD](deployment.md) để cấu hình SSH, registry và release.
 
 ## 6. Đọc và cập nhật Nginx
 

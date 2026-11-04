@@ -7,6 +7,7 @@ COPY backend/pom.xml ./
 RUN --mount=type=cache,target=/root/.m2 \
   mvn --batch-mode --no-transfer-progress dependency:go-offline
 COPY backend/src/ ./src/
+COPY database/migrations/ /workspace/database/migrations/
 # CI runs tests separately; the image build only packages the application.
 RUN --mount=type=cache,target=/root/.m2 \
   mvn --batch-mode --no-transfer-progress -DskipTests package
@@ -17,11 +18,12 @@ RUN apk add --no-cache curl \
   && adduser -S -D -H -u 10001 -G app app
 WORKDIR /app
 COPY --from=build --chown=10001:10001 /workspace/backend/target/service-desk-backend.jar /app/app.jar
-COPY --chown=10001:10001 database/migrations/ /app/migrations/
 ENV SPRING_PROFILES_ACTIVE=prod \
     SPRING_JPA_HIBERNATE_DDL_AUTO=validate \
-    SPRING_FLYWAY_LOCATIONS=filesystem:/app/migrations \
+    SPRING_FLYWAY_LOCATIONS=classpath:db/migration \
+    SPRING_FLYWAY_BASELINE_ON_MIGRATE=false \
     APP_SEED_ENABLED=false \
+    SEED_DEMO_DATA=false \
     JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75.0"
 USER 10001:10001
 EXPOSE 8080

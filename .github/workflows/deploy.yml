@@ -1,0 +1,370 @@
+name: TechByte CI/CD
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main, dang]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Keep production deployment and verification in the same queue.
+concurrency:
+  group: techbyte-${{ github.ref == 'refs/heads/main' && 'production' || github.ref }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '22'
+  JAVA_VERSION: '21'
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  ci:
+    name: Test and build React / Spring Boot
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: techbyte_ci
+          POSTGRES_USER: techbyte_ci
+          POSTGRES_PASSWORD: ci-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U techbyte_ci -d techbyte_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Check project prerequisites
+        run: |
+          missing=0
+          for path in \
+            frontend/package.json frontend/package-lock.json frontend/Dockerfile \
+            backend/pom.xml backend/mvnw backend/.mvn/wrapper/maven-wrapper.properties \
+            backend/Dockerfile infra/compose/compose.prod.yml infra/nginx/default.conf \
+            database/migrations/V001__init.sql .github/scripts/smoke-test.sh .github/scripts/deploy.sh; do
+            if [[ ! -f "$path" ]]; then
+              echo "::error file=$path::Missing required file. See docs/deployment.md."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Set up Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+          cache-dependency-path: backend/pom.xml
+
+      - name: Install, lint, test and build React
+        working-directory: frontend
+        env:
+          CI: 'true'
+        run: |
+          npm ci
+          npm run lint
+          npm run test:ci
+          npm run build
+
+      - name: Test and package Spring Boot
+        working-directory: backend
+        run: bash ./mvnw --batch-mode --no-transfer-progress -DfailIfNoTests=true clean verify
+
+      - name: Check PostgreSQL migrations and API workflow
+        env:
+          SPRING_PROFILES_ACTIVE: ci
+          SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/techbyte_ci
+          SPRING_DATASOURCE_USERNAME: techbyte_ci
+          SPRING_DATASOURCE_PASSWORD: ci-only-password
+          SPRING_JPA_HIBERNATE_DDL_AUTO: validate
+          SPRING_FLYWAY_ENABLED: 'true'
+          SPRING_FLYWAY_BASELINE_ON_MIGRATE: 'false'
+          SEED_DEMO_DATA: 'true'
+          JWT_SECRET: ci-only-placeholder-not-a-production-secret-0123456789
+          SERVER_PORT: '18080'
+          SMOKE_EMAIL: admin@techbyte.vn
+          SMOKE_PASSWORD: Password123!
+        run: |
+          java -jar backend/target/service-desk-backend.jar > "$RUNNER_TEMP/backend-ci.log" 2>&1 &
+          backend_pid=$!
+          trap 'kill "$backend_pid" 2>/dev/null || true' EXIT
+          ready=0
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:18080/api/ready \
+              | jq -e '.status == "READY" and .database == "UP"' > /dev/null; then
+              ready=1
+              break
+            fi
+            if ! kill -0 "$backend_pid" 2>/dev/null; then break; fi
+            sleep 2
+          done
+          if [[ "$ready" != 1 ]]; then
+            tail -100 "$RUNNER_TEMP/backend-ci.log"
+            exit 1
+          fi
+          bash .github/scripts/smoke-test.sh http://127.0.0.1:18080
+
+      - name: Check backup and restore on a disposable lab database
+        env:
+          DB_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          bash database/scripts/backup.sh "$RUNNER_TEMP/db-backups"
+          archives=("$RUNNER_TEMP"/db-backups/*.dump)
+          restore_container="techbyte-restore-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          trap 'docker rm --force --volumes "$restore_container" > /dev/null 2>&1 || true' EXIT
+          docker run -d --name "$restore_container" --network none \
+            -e POSTGRES_USER=techbyte_ci -e POSTGRES_DB=techbyte_ci \
+            -e POSTGRES_PASSWORD=ci-only-password \
+            --health-cmd 'pg_isready -U techbyte_ci -d techbyte_ci' \
+            --health-interval 2s --health-timeout 2s --health-retries 20 postgres:16-alpine
+          healthy=0
+          for attempt in {1..40}; do
+            if [[ "$(docker inspect --format '{{.State.Health.Status}}' "$restore_container")" == healthy ]]; then
+              healthy=1
+              break
+            fi
+            sleep 2
+          done
+          [[ "$healthy" == 1 ]]
+          bash database/scripts/restore.sh "${archives[0]}" "$restore_container"
+          users="$(docker exec "$restore_container" psql -U techbyte_ci -d techbyte_ci -tAc 'SELECT count(*) FROM users')"
+          [[ "$users" == 8 ]]
+          printf 'invalid archive' > "$RUNNER_TEMP/invalid.dump"
+          if bash database/scripts/restore.sh "$RUNNER_TEMP/invalid.dump" "$restore_container" \
+            > "$RUNNER_TEMP/invalid-restore.log" 2>&1; then
+            echo '::error::Invalid backup was incorrectly reported as restored.'
+            exit 1
+          fi
+
+      - name: Validate production Compose contract
+        run: |
+          mkdir -p "$RUNNER_TEMP/tls"
+          cat > "$RUNNER_TEMP/compose-ci.env" <<'ENV'
+          POSTGRES_DB=techbyte_ci
+          POSTGRES_USER=techbyte_ci
+          POSTGRES_PASSWORD=ci-only-password
+          JWT_SECRET=ci-only-placeholder-not-a-production-secret-0123456789
+          ENV
+          export APP_ENV_FILE="$RUNNER_TEMP/compose-ci.env"
+          export TLS_DIR="$RUNNER_TEMP/tls"
+          export FRONTEND_IMAGE=techbyte-frontend:ci
+          export BACKEND_IMAGE=techbyte-backend:ci
+          docker compose -p techbyte-ci --env-file "$APP_ENV_FILE" \
+            -f infra/compose/compose.prod.yml config --format json \
+            > "$RUNNER_TEMP/compose.json"
+          jq -e '
+            .services as $s |
+            ($s | has("frontend") and has("backend") and has("database") and has("reverse-proxy")) and
+            ($s.frontend.image == env.FRONTEND_IMAGE) and
+            ($s.backend.image == env.BACKEND_IMAGE) and
+            (($s.backend.healthcheck.test | length) > 0) and
+            (($s.database.healthcheck.test | length) > 0) and
+            (($s.backend.ports // []) | length == 0) and
+            (($s.database.ports // []) | length == 0)
+          ' "$RUNNER_TEMP/compose.json"
+
+      - name: Check Dockerfiles build
+        run: |
+          docker build --file frontend/Dockerfile --tag techbyte-frontend:ci .
+          docker build --file backend/Dockerfile --tag techbyte-backend:ci .
+
+  publish:
+    name: Publish versioned images to GHCR
+    needs: ci
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      frontend_image: ${{ steps.references.outputs.frontend_image }}
+      backend_image: ${{ steps.references.outputs.backend_image }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Compute lowercase image names
+        id: names
+        run: |
+          repository="${GITHUB_REPOSITORY,,}"
+          echo "frontend=ghcr.io/${repository}-frontend" >> "$GITHUB_OUTPUT"
+          echo "backend=ghcr.io/${repository}-backend" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push React image
+        id: frontend
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: frontend/Dockerfile
+          push: true
+          tags: ${{ steps.names.outputs.frontend }}:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+      - name: Build and push Spring Boot image
+        id: backend
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: backend/Dockerfile
+          push: true
+          tags: ${{ steps.names.outputs.backend }}:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      - name: Export immutable image references
+        id: references
+        env:
+          FRONTEND_NAME: ${{ steps.names.outputs.frontend }}
+          BACKEND_NAME: ${{ steps.names.outputs.backend }}
+          FRONTEND_DIGEST: ${{ steps.frontend.outputs.digest }}
+          BACKEND_DIGEST: ${{ steps.backend.outputs.digest }}
+        run: |
+          echo "frontend_image=${FRONTEND_NAME}@${FRONTEND_DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "backend_image=${BACKEND_NAME}@${BACKEND_DIGEST}" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    name: Deploy and verify Ubuntu VPS
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment:
+      name: production
+      url: ${{ vars.APP_URL }}
+    env:
+      SSH_HOST: ${{ secrets.SSH_IP_SERVER }}
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+      SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+      SSH_USER: ${{ secrets.SSH_USER || vars.SSH_USER || 'ubuntu' }}
+      SSH_PORT: ${{ vars.SSH_PORT || '22' }}
+      APP_URL: ${{ vars.APP_URL }}
+      FRONTEND_IMAGE: ${{ needs.publish.outputs.frontend_image }}
+      BACKEND_IMAGE: ${{ needs.publish.outputs.backend_image }}
+      RELEASE_ID: ${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Checkout deployment configuration
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Refuse an outdated main release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          current_sha="$(curl --fail --silent --show-error \
+            --connect-timeout 10 --max-time 30 \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/git/ref/heads/main" | jq -er '.object.sha')"
+          if [[ "$current_sha" != "$GITHUB_SHA" ]]; then
+            echo '::error::A newer commit exists on main. Run the workflow for the current main commit.'
+            exit 1
+          fi
+
+      - name: Validate settings and prepare SSH
+        run: |
+          for name in SSH_HOST SSH_PRIVATE_KEY SSH_KNOWN_HOSTS APP_URL; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing $name. See docs/deployment.md."
+              exit 1
+            fi
+          done
+          [[ "$SSH_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]]
+          [[ "$SSH_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          [[ "$SSH_PORT" =~ ^[0-9]{1,5}$ ]]
+          ((10#$SSH_PORT > 0 && 10#$SSH_PORT <= 65535))
+          [[ "$APP_URL" =~ ^https://[a-zA-Z0-9][a-zA-Z0-9.-]*(:[0-9]+)?/?$ ]]
+          umask 077
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > "$HOME/.ssh/techbyte_deploy"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          ssh-keygen -y -P '' -f "$HOME/.ssh/techbyte_deploy" > /dev/null
+          cat > "$HOME/.ssh/config" <<CONFIG
+          Host techbyte-vps
+            HostName $SSH_HOST
+            User $SSH_USER
+            Port $SSH_PORT
+            IdentityFile $HOME/.ssh/techbyte_deploy
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+            BatchMode yes
+            ConnectTimeout 20
+            ServerAliveInterval 15
+            ServerAliveCountMax 4
+          CONFIG
+
+      - name: Transfer versioned deployment bundle
+        run: |
+          printf 'FRONTEND_IMAGE=%s\nBACKEND_IMAGE=%s\nRELEASE_SHA=%s\n' \
+            "$FRONTEND_IMAGE" "$BACKEND_IMAGE" "$GITHUB_SHA" > "$RUNNER_TEMP/release.env"
+          tar -czf "$RUNNER_TEMP/release.tgz" \
+            -C "$GITHUB_WORKSPACE" infra/compose/compose.prod.yml infra/nginx .github/scripts/smoke-test.sh \
+            -C "$RUNNER_TEMP" release.env
+          ssh techbyte-vps 'install -d -m 750 /opt/techbyte/incoming /opt/techbyte/releases'
+          scp "$RUNNER_TEMP/release.tgz" "techbyte-vps:/opt/techbyte/incoming/${RELEASE_ID}.tgz"
+
+      - name: Deploy, smoke test and recover on failure
+        run: |
+          printf -v command 'bash -s -- %q %q' "$RELEASE_ID" "${APP_URL%/}"
+          ssh techbyte-vps "$command" < .github/scripts/deploy.sh
+
+      - name: Write release summary
+        if: always()
+        env:
+          DEPLOY_RESULT: ${{ job.status }}
+        run: |
+          {
+            echo '### TechByte deployment'
+            printf -- '- Result: %s\n' "$DEPLOY_RESULT"
+            printf -- '- Release: `%s`\n' "$RELEASE_ID"
+            printf -- '- Actor: `%s`\n' "$GITHUB_ACTOR"
+            printf -- '- UTC: %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            printf -- '- Frontend: `%s`\n' "$FRONTEND_IMAGE"
+            printf -- '- Backend: `%s`\n' "$BACKEND_IMAGE"
+            printf -- '- URL: %s\n' "$APP_URL"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove temporary SSH credentials
+        if: always()
+        run: rm -f "$HOME/.ssh/techbyte_deploy"
