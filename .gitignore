@@ -1,0 +1,17 @@
+# Local credentials and origin certificates
+.env
+.env.*
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.*.example
+infra/nginx/tls/
+*.key
+*.pem
+
+# Build output (already tracked files are not removed by these rules)
+**/node_modules/
+**/dist/
+**/target/
+database/backups/
+*.log

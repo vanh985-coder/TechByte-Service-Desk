@@ -1,0 +1,16 @@
+.git
+.github
+.agent
+.agents
+**/node_modules
+**/dist
+**/target
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/*.crt
+**/backups
+infra/nginx/tls
+*.pdf
+*.log

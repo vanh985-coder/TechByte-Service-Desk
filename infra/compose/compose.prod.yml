@@ -1,0 +1,130 @@
+name: techbyte
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '3'
+
+services:
+  database:
+    image: postgres:16-alpine
+    # Matches the existing database team's backup/restore scripts.
+    container_name: database
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-servicedesk}
+      POSTGRES_USER: ${POSTGRES_USER:-servicedesk_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your env file}
+    volumes:
+      - db_volume:/var/lib/postgresql/data
+    networks:
+      - db_network
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging: *logging
+
+  backend:
+    image: ${BACKEND_IMAGE:-techbyte-backend:local}
+    build:
+      context: ../..
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ${APP_ENV_FILE:-.env}
+    environment:
+      SERVER_PORT: '8080'
+      SERVER_FORWARD_HEADERS_STRATEGY: framework
+      SPRING_PROFILES_ACTIVE: prod
+      DB_URL: jdbc:postgresql://database:5432/${POSTGRES_DB:-servicedesk}
+      DB_USERNAME: ${POSTGRES_USER:-servicedesk_user}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your env file}
+      JPA_DDL_AUTO: validate
+      SPRING_JPA_HIBERNATE_DDL_AUTO: validate
+      SPRING_FLYWAY_ENABLED: 'true'
+      SPRING_FLYWAY_LOCATIONS: filesystem:/app/migrations
+      JWT_SECRET: ${JWT_SECRET:?Set a random JWT_SECRET of at least 32 characters}
+      CORS_ALLOWED_ORIGINS: ${APP_URL:-https://localhost}
+      # Public deployments do not create the source code's default demo accounts.
+      APP_SEED_ENABLED: 'false'
+    depends_on:
+      database:
+        condition: service_healthy
+    networks:
+      - app_network
+      - db_network
+    healthcheck:
+      test: ['CMD', 'curl', '--fail', '--silent', 'http://127.0.0.1:8080/ready']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    stop_grace_period: 30s
+    logging: *logging
+
+  frontend:
+    image: ${FRONTEND_IMAGE:-techbyte-frontend:local}
+    build:
+      context: ../..
+      dockerfile: frontend/Dockerfile
+    restart: unless-stopped
+    networks:
+      - app_network
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1/healthz']
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    logging: *logging
+
+  reverse-proxy:
+    image: nginx:1.30-alpine
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:-localhost}
+      # Substitute APP_DOMAIN only, keeping Nginx $host/$uri/etc. intact.
+      NGINX_ENVSUBST_FILTER: APP_DOMAIN
+    volumes:
+      - type: bind
+        source: ../nginx/default.conf
+        target: /etc/nginx/templates/default.conf.template
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${TLS_DIR:-../nginx/tls}
+        target: /etc/nginx/tls
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    networks:
+      - app_network
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1/healthz']
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging: *logging
+
+volumes:
+  db_volume:
+    name: db_volume
+
+networks:
+  app_network:
+  db_network:
+    internal: true
