@@ -5,6 +5,7 @@ import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.info.Info;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
 import io.swagger.v3.oas.models.security.SecurityScheme;
+import io.swagger.v3.oas.models.servers.Server;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -16,6 +17,7 @@ public class OpenApiConfig {
     @Bean
     public OpenAPI serviceDeskOpenAPI() {
         return new OpenAPI()
+                .addServersItem(new Server().url("/").description("Default Server (Local / Tunnel / Proxy)"))
                 .info(new Info()
                         .title("TechByte Service Desk API")
                         .version("1.0.0")
@@ -29,4 +31,3 @@ public class OpenApiConfig {
                                 .bearerFormat("JWT")));
     }
 }
-

@@ -4,6 +4,8 @@ spring:
     username: sa
     password:
     driver-class-name: org.h2.Driver
+  flyway:
+    enabled: false
   jpa:
     hibernate:
       ddl-auto: create-drop
@@ -13,4 +15,3 @@ app:
   jwt:
     secret: test_secret_key_for_techbyte_service_desk_automated_tests_2026
     expiration-ms: 3600000
-
