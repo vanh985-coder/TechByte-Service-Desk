@@ -1,0 +1,21 @@
+#!/bin/sh
+# Apache Maven Wrapper startup script
+set -e
+WRAPPER_DIR="$(cd "$(dirname "$0")" && pwd)"
+DIST_URL="https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/3.9.9/apache-maven-3.9.9-bin.zip"
+BASE_DIR="${HOME}/.m2/wrapper/dists/apache-maven"
+TARGET_DIR="${BASE_DIR}/apache-maven-3.9.9"
+MVN_BIN="${TARGET_DIR}/bin/mvn"
+
+if [ ! -x "$MVN_BIN" ]; then
+  mkdir -p "$BASE_DIR"
+  ZIP_PATH="${BASE_DIR}/apache-maven-3.9.9-bin.zip"
+  echo "Downloading Apache Maven 3.9.9..."
+  curl -fsSL "$DIST_URL" -o "$ZIP_PATH"
+  unzip -q -o "$ZIP_PATH" -d "$BASE_DIR"
+  rm -f "$ZIP_PATH"
+  chmod +x "$MVN_BIN"
+fi
+
+exec "$MVN_BIN" "$@"
+
