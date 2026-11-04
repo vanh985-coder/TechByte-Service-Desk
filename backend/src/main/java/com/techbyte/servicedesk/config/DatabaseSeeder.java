@@ -58,7 +58,7 @@ public class DatabaseSeeder implements CommandLineRunner {
         }
 
         log.info("Initializing demo dataset (08 users, 20 tickets, 10 comments)...");
-        String defaultHash = passwordEncoder.encode("Password@123");
+        String defaultHash = passwordEncoder.encode("Password123!");
 
         User admin1 = userRepository.save(new User("admin@techbyte.vn", defaultHash, "Trần Quản Trị (Admin)", Role.ADMIN));
         User admin2 = userRepository.save(new User("manager@techbyte.vn", defaultHash, "Lê Quản Lý (Admin)", Role.ADMIN));
