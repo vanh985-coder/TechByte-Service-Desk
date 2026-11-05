@@ -11,15 +11,18 @@ app_url="${2:?Missing HTTPS application URL}"
 root=/opt/techbyte
 release_dir="$root/releases/$release_id"
 export APP_ENV_FILE="$root/shared/.env"
-export TLS_DIR="$root/shared/tls"
 # Image values must come from the release manifest, not the login environment.
 unset FRONTEND_IMAGE BACKEND_IMAGE RELEASE_SHA
 
-for command in docker curl jq flock tar; do
+for command in docker curl jq flock tar systemctl; do
   command -v "$command" > /dev/null || { echo "Missing VPS command: $command" >&2; exit 1; }
 done
 docker compose version > /dev/null
-[[ -r "$APP_ENV_FILE" && -d "$TLS_DIR" ]]
+[[ -r "$APP_ENV_FILE" ]]
+systemctl is-active --quiet nginx || {
+  echo 'Configure and start Ubuntu Nginx first. See docs/nginx-server.md.' >&2
+  exit 1
+}
 [[ ! -e "$root/current" || -L "$root/current" ]]
 [[ ! -e "$root/previous" || -L "$root/previous" ]]
 install -d -m 750 "$root/releases" "$root/backups"
@@ -39,21 +42,20 @@ install -d -m 750 "$release_dir"
 tar -xzf "$root/incoming/$release_id.tgz" -C "$release_dir"
 [[ -f "$release_dir/release.env" ]]
 # Keep private runtime configuration on the VPS, alongside the image manifest.
-# A rollback must not reuse a newly edited shared env file or certificate pair.
+# A rollback must not reuse a newly edited shared env file.
 install -m 600 "$APP_ENV_FILE" "$release_dir/runtime.env"
-install -d -m 700 "$release_dir/tls"
-install -m 600 "$TLS_DIR/origin.crt" "$release_dir/tls/origin.crt"
-install -m 600 "$TLS_DIR/origin.key" "$release_dir/tls/origin.key"
+# Legacy releases publish 80/443 and cannot be rolled back under host Nginx.
+touch "$release_dir/host-nginx"
 
 compose_at() {
   local directory="$1"
   shift
-  local runtime_env="$directory/runtime.env" cert_dir="$directory/tls"
-  [[ -r "$runtime_env" && -r "$cert_dir/origin.crt" && -r "$cert_dir/origin.key" ]] || {
+  local runtime_env="$directory/runtime.env"
+  [[ -r "$runtime_env" && -f "$directory/host-nginx" ]] || {
     echo 'Release is missing its private runtime configuration; manual recovery is required.' >&2
     return 1
   }
-  APP_ENV_FILE="$runtime_env" TLS_DIR="$cert_dir" docker compose --project-name techbyte \
+  APP_ENV_FILE="$runtime_env" docker compose --project-name techbyte \
     --env-file "$runtime_env" --env-file "$directory/release.env" \
     -f "$directory/infra/compose/compose.prod.yml" "$@"
 }
@@ -96,10 +98,14 @@ recover() {
   if [[ "$changed" == 1 && -n "$previous_dir" ]]; then
     # Automatic rollback is an operator opt-in after reviewing schema compatibility.
     if [[ -f "$root/shared/allow-image-rollback" ]]; then
+      if [[ ! -f "$previous_dir/host-nginx" ]]; then
+        record rollback-needs-host-nginx
+        echo 'Previous release uses container Nginx; manual recovery is required.' >&2
+        exit "$result"
+      fi
       echo 'Restoring the previous images and configuration.' >&2
-      if compose_at "$previous_dir" up -d --no-build --wait --wait-timeout 180 database backend frontend &&
-         compose_at "$previous_dir" up -d --no-deps --no-build --force-recreate \
-           --wait --wait-timeout 90 reverse-proxy && smoke_test "$previous_dir"; then
+      if compose_at "$previous_dir" up -d --no-build --remove-orphans --wait \
+           --wait-timeout 180 database backend frontend && smoke_test "$previous_dir"; then
         record rolled-back
       else
         record rollback-failed
@@ -142,11 +148,9 @@ fi
 
 changed=1
 # Flyway is run by Spring Boot at startup; readiness must include the database.
-compose_at "$release_dir" up -d --no-build --wait --wait-timeout 180 database backend frontend
-# Recreate Nginx so upstream DNS resolves the newly created app containers.
-compose_at "$release_dir" up -d --no-deps --no-build --force-recreate \
-  --wait --wait-timeout 90 reverse-proxy
-compose_at "$release_dir" exec -T reverse-proxy nginx -t
+compose_at "$release_dir" up -d --no-build --remove-orphans --wait \
+  --wait-timeout 180 database backend frontend
+# Host Nginx uses stable loopback ports; no reload or sudo is needed here.
 smoke_test
 
 if [[ -n "$previous_dir" ]]; then
