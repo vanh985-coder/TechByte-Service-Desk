@@ -13,8 +13,10 @@ Workflow chính: `.github/workflows/deploy.yml`.
   chạy CI. Workflow từ chối deploy một commit không còn là đầu nhánh `main`.
 - Chỉ có một release production chạy tại một thời điểm. VPS có thêm khóa `flock`.
 
-Không triển khai Nginx trên máy phát triển. Nginx production chạy trong service
-`reverse-proxy` trên VPS; xem [hướng dẫn server](nginx-server.md).
+Nginx production cài trực tiếp trên Ubuntu, dùng `sites-available` và cổng 80/443.
+Docker chỉ chạy frontend (`127.0.0.1:8081`), backend (`127.0.0.1:8080`) và database.
+Cài Nginx, chứng chỉ và enable site theo [hướng dẫn server](nginx-server.md) trước
+khi chạy CD. Workflow chỉ deploy ứng dụng; không ghi vào `/etc/nginx` hoặc gọi sudo.
 
 ## Secrets và Variables trên GitHub
 
@@ -26,7 +28,7 @@ Vào **Settings -> Secrets and variables -> Actions**:
 | Secret | `SSH_PRIVATE_KEY` | Private key chuyên dùng cho deploy |
 | Secret | `SSH_USER` | User SSH; workflow cũng hỗ trợ Variable cùng tên, mặc định `ubuntu` |
 | Secret | `SSH_KNOWN_HOSTS` | Khóa host SSH đã đối chiếu qua console/kênh tin cậy |
-| Variable | `APP_URL` | Domain HTTPS, ví dụ `https://desk.example.com` |
+| Variable | `APP_URL` | `https://anhdang2k7.io.vn` |
 | Variable | `SSH_PORT` | Không bắt buộc; mặc định `22` |
 
 Với cổng SSH khác 22, known_hosts phải có dạng `[hostname]:port` tương ứng.
@@ -39,8 +41,10 @@ nhập GHCR bằng token có `read:packages` và được cấp quyền đọc h
 
 ## Chuẩn bị VPS một lần
 
-Cần Docker Engine + Compose >= 2.24, Bash, OpenSSH, `curl`, `jq`, `tar`, `flock`
-(util-linux). User SSH phải được chạy Docker và ghi vào `/opt/techbyte`.
+Cần Docker Engine + Compose >= 2.24, Nginx Ubuntu đang active, Bash, OpenSSH,
+`curl`, `jq`, `tar`, `flock` (util-linux) và `systemctl`.
+User SSH phải được chạy Docker và ghi vào `/opt/techbyte`; không cần quyền sudo
+để deploy. CI kiểm tra cú pháp site với chứng chỉ tạm trong container Nginx.
 Firewall phải cho phép runner tới SSH theo quy định lab; không giả định runner
 GitHub thông thường có IP cố định.
 
@@ -48,17 +52,19 @@ Tạo thư mục do user deploy quản lý:
 
 ```bash
 sudo install -d -m 0750 -o "$USER" -g "$(id -gn)" /opt/techbyte
-mkdir -p /opt/techbyte/shared/tls /opt/techbyte/incoming /opt/techbyte/releases
-cp infra/compose/env.example /opt/techbyte/shared/.env
+mkdir -p /opt/techbyte/shared /opt/techbyte/incoming /opt/techbyte/releases
+test -f /opt/techbyte/shared/.env || cp infra/compose/env.example /opt/techbyte/shared/.env
 chmod 600 /opt/techbyte/shared/.env
 nano /opt/techbyte/shared/.env
 ```
 
-Điền password/JWT ngẫu nhiên, `APP_DOMAIN`, `APP_URL` và đặt chứng chỉ origin ở:
+Điền password/JWT cho cài đặt mới, giữ credentials nếu DB đã tồn tại.
+Đặt `APP_URL=https://anhdang2k7.io.vn`, khớp với GitHub Variable cùng tên.
+Quản trị viên cài chứng chỉ origin riêng trên Ubuntu ở:
 
 ```text
-/opt/techbyte/shared/tls/origin.crt
-/opt/techbyte/shared/tls/origin.key
+/etc/nginx/ssl/anhdang2k7.io.vn.crt
+/etc/nginx/ssl/anhdang2k7.io.vn.key
 ```
 
 Cấu hình Cloudflare Full (strict) theo runbook Nginx. Với GHCR private, chạy
@@ -82,8 +88,9 @@ chưa có Flyway history cần nhóm DB/BE xác nhận baseline riêng, không b
 
 Deploy lưu image digest/config theo thư mục release riêng, backup database hiện có
 bằng `pg_dump`, chờ healthchecks và kiểm tra giao diện HTTPS + `/api/ready`.
-Mỗi release giữ snapshot `.env` và chứng chỉ trên VPS với quyền riêng tư 600/700;
-rollback dùng đúng snapshot đó. Các file bí mật này không được chuyển về GitHub.
+Mỗi release giữ snapshot `.env` trên VPS với quyền 600; rollback dùng snapshot đó.
+Chứng chỉ và site Nginx được quản lý trên Ubuntu, không nằm trong release và không
+bị rollback cùng image. Các file bí mật không được chuyển về GitHub.
 Readiness phải trả `status=READY` và `database=UP` sau khi startup/seed hoàn tất.
 
 CI chạy smoke test đăng nhập, tạo ticket, đổi trạng thái, bình luận, đọc lịch sử và
@@ -120,6 +127,13 @@ touch /opt/techbyte/shared/allow-image-rollback
 Gỡ marker trước migration không tương thích. Rollback image không đảo schema và
 không restore DB tự động. Release đầu tiên chưa có bản cũ để khôi phục.
 Không chạy `docker compose down -v` hoặc xóa volume để xử lý lỗi.
+
+Khi chuyển từ proxy Docker, làm bước chuyển đổi trong runbook server để giải phóng
+cổng 80/443 và khởi động Nginx Ubuntu trước khi deploy. Lệnh Compose dùng
+`--remove-orphans` để loại bỏ proxy Docker cũ cùng project `techbyte`.
+Release mới có marker `host-nginx`; script từ chối rollback về release cũ không có
+marker này để tránh chiếm lại cổng 80/443. Trong lần chuyển đổi đầu tiên, recovery
+về kiến trúc cũ phải do người vận hành xử lý riêng.
 
 ## Bằng chứng và bàn giao
 

@@ -34,6 +34,9 @@ services:
       context: ../..
       dockerfile: backend/Dockerfile
     restart: unless-stopped
+    # Nginx runs directly on Ubuntu and reaches the API over loopback.
+    ports:
+      - '127.0.0.1:8080:8080'
     env_file:
       - ${APP_ENV_FILE:-.env}
     environment:
@@ -77,6 +80,8 @@ services:
       context: ../..
       dockerfile: frontend/Dockerfile
     restart: unless-stopped
+    ports:
+      - '127.0.0.1:8081:80'
     networks:
       - app_network
     healthcheck:
@@ -85,44 +90,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 5s
-    logging: *logging
-
-  reverse-proxy:
-    image: nginx:1.30-alpine
-    restart: unless-stopped
-    ports:
-      - '80:80'
-      - '443:443'
-    environment:
-      APP_DOMAIN: ${APP_DOMAIN:-localhost}
-      # Substitute APP_DOMAIN only, keeping Nginx $host/$uri/etc. intact.
-      NGINX_ENVSUBST_FILTER: APP_DOMAIN
-    volumes:
-      - type: bind
-        source: ../nginx/default.conf
-        target: /etc/nginx/templates/default.conf.template
-        read_only: true
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ${TLS_DIR:-../nginx/tls}
-        target: /etc/nginx/tls
-        read_only: true
-        bind:
-          create_host_path: false
-    depends_on:
-      backend:
-        condition: service_healthy
-      frontend:
-        condition: service_healthy
-    networks:
-      - app_network
-    healthcheck:
-      test: ['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1/healthz']
-      interval: 15s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
     logging: *logging
 
 volumes:

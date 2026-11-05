@@ -8,13 +8,17 @@ Docker Compose >= 2.24 is recommended.
 Run these steps on the VPS:
 
 1. Copy `infra/compose/env.example` to `infra/compose/.env`.
-2. Set random `POSTGRES_PASSWORD` and `JWT_SECRET`, the real `APP_DOMAIN` and `APP_URL`.
-3. Install the origin certificate/key in the configured `TLS_DIR`.
-4. Run `docker compose up --build -d --wait --wait-timeout 180` from the repository root.
+2. Set `POSTGRES_PASSWORD`, `JWT_SECRET` and `APP_URL=https://anhdang2k7.io.vn`.
+3. Install Nginx directly on Ubuntu, the origin certificate/key in `/etc/nginx/ssl`,
+   and `infra/nginx/default.conf` as `/etc/nginx/sites-available/anhdang2k7.io.vn`;
+   enable the site through `sites-enabled`, test and reload Nginx.
+4. Run `docker compose up --build -d --remove-orphans --wait --wait-timeout 180` from the repository root.
 5. Check the HTTPS domain and `/api/ready`.
 
 Follow [the Nginx/server runbook](docs/nginx-server.md) for Docker, Cloudflare,
-origin TLS and troubleshooting. Nginx runs in the `reverse-proxy` container on the VPS.
+origin TLS and troubleshooting. Ubuntu Nginx owns public ports 80/443 and proxies
+to frontend on `127.0.0.1:8081` and backend on `127.0.0.1:8080`. Database has no
+published port. Stop the old proxy container before enabling Ubuntu Nginx when migrating.
 
 Both Dockerfiles use the repository root as build context. Database migrations
 are included in the backend image and applied with Flyway before schema validation.

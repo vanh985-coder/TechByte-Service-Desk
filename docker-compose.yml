@@ -1,4 +1,4 @@
-# Run on the Ubuntu VPS after configuring the domain and origin certificates.
+# Run app containers on the VPS; Ubuntu Nginx handles public HTTP/HTTPS separately.
 name: techbyte
 include:
   - path: ./infra/compose/compose.prod.yml
