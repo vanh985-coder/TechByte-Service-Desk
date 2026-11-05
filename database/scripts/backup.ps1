@@ -1,39 +1,39 @@
-# ==============================================================================
-# PowerShell Script Backup Database — TechByte Service Desk (Windows)
-# ==============================================================================
-# Sử dụng: .\database\scripts\backup.ps1 [-BackupDir .\database\backups]
-# ==============================================================================
-
 param (
-    [string]$ContainerName = "database",
-    [string]$DbUser = "postgres",
-    [string]$DbName = "postgres",
-    [string]$BackupDir = ".\database\backups"
+    [ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9_.-]*$')]
+    [string]$ContainerName = 'database',
+    [string]$DbUser = $env:POSTGRES_USER,
+    [string]$DbName = $env:POSTGRES_DB,
+    [string]$BackupDir = '.\database\backups'
 )
-
-$ErrorActionPreference = "Stop"
-
-if (-not (Test-Path $BackupDir)) {
-    New-Item -ItemType Directory -Path $BackupDir -Force | Out-Null
+$ErrorActionPreference = 'Stop'
+$running = docker inspect --format '{{.State.Running}}' $ContainerName
+if ($LASTEXITCODE -ne 0 -or $running -ne 'true') { throw 'Database container is not running.' }
+if (-not $DbUser) {
+    $value = docker exec $ContainerName printenv POSTGRES_USER
+    if ($LASTEXITCODE -gt 1) { throw 'Cannot read container database settings.' }
+    $DbUser = ($value -join '').Trim()
+    if (-not $DbUser) { $DbUser = 'postgres' }
 }
-
-$timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-$backupFile = Join-Path $BackupDir "techbyte_backup_$timestamp.dump"
-
-Write-Host "==========================================================" -ForegroundColor Cyan
-Write-Host " [BACKUP] Bắt đầu sao lưu database TechByte Service Desk" -ForegroundColor Cyan
-Write-Host " Container : $ContainerName"
-Write-Host " Database  : $DbName"
-Write-Host " File đích : $backupFile"
-Write-Host "==========================================================" -ForegroundColor Cyan
-
-docker exec -t $ContainerName pg_dump -U $DbUser -d $DbName -F c -b -v > $backupFile
-
-if ((Get-Item $backupFile).Length -gt 100) {
-    Write-Host "✅ [SUCCESS] Sao lưu thành công!" -ForegroundColor Green
-    Write-Host " Dung lượng: $((Get-Item $backupFile).Length) bytes"
-    Write-Host " File dump : $backupFile"
-} else {
-    Write-Error "❌ [FAILED] File sao lưu rỗng hoặc kích thước bất thường!"
+if (-not $DbName) {
+    $value = docker exec $ContainerName printenv POSTGRES_DB
+    if ($LASTEXITCODE -gt 1) { throw 'Cannot read container database settings.' }
+    $DbName = ($value -join '').Trim()
+    if (-not $DbName) { $DbName = $DbUser }
 }
-
+New-Item -ItemType Directory -Path $BackupDir -Force | Out-Null
+$id = [guid]::NewGuid().ToString('N')
+$temporaryFile = "/tmp/techbyte-backup-$id.dump"
+$backupFile = Join-Path $BackupDir ("techbyte_backup_" + (Get-Date -Format 'yyyyMMdd_HHmmss') + "_$id.dump")
+try {
+    # docker cp preserves bytes; Windows PowerShell 5 stdout redirection does not.
+    docker exec $ContainerName pg_dump -U $DbUser -d $DbName -Fc -b -f $temporaryFile
+    if ($LASTEXITCODE -ne 0) { throw 'pg_dump failed.' }
+    docker exec $ContainerName pg_restore --list $temporaryFile | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Backup archive validation failed.' }
+    docker cp "${ContainerName}:$temporaryFile" $backupFile
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot copy backup from container.' }
+    if ((Get-Item -LiteralPath $backupFile).Length -eq 0) { throw 'Backup file is empty.' }
+    Write-Output "Backup archive validated: $backupFile"
+} finally {
+    docker exec $ContainerName rm -f -- $temporaryFile | Out-Null
+}

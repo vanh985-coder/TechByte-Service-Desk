@@ -3,8 +3,10 @@ import { Link, useLocation } from 'react-router-dom';
 import { listTickets } from '../api/tickets';
 import { Loading, Empty, ErrorBox } from '../components/StateView';
 import { fmtDateTime, statusLabel, priorityLabel } from '../utils/format';
+import { useAuth } from '../auth/context';
 
 export default function TicketListPage() {
+  const { user } = useAuth();
   // Lấy thông báo (flash) nếu được chuyển hướng từ trang Tạo Ticket sang
   const location = useLocation();
   const [flash, setFlash] = useState(location.state?.flash || '');
@@ -61,9 +63,9 @@ export default function TicketListPage() {
       {/* 2. Tiêu đề & Nút tạo mới */}
       <div className="page-head">
         <h1>Danh sách ticket</h1>
-        <Link to="/tickets/new" className="btn btn--primary">
+        {['ADMIN', 'STAFF'].includes(user?.role) && <Link to="/tickets/new" className="btn btn--primary">
           + Tạo ticket
-        </Link>
+        </Link>}
       </div>
 
       {/* 3. Bộ lọc & Tìm kiếm */}
@@ -77,7 +79,8 @@ export default function TicketListPage() {
           <option value="">Tất cả trạng thái</option>
           <option value="open">Đang mở</option>
           <option value="in_progress">Đang xử lý</option>
-          <option value="done">Hoàn thành</option>
+          <option value="resolved">Đã xử lý</option>
+          <option value="closed">Đã đóng</option>
         </select>
       </div>
 

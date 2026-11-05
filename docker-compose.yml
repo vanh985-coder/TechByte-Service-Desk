@@ -1,0 +1,5 @@
+# Run on the Ubuntu VPS after configuring the domain and origin certificates.
+name: techbyte
+include:
+  - path: ./infra/compose/compose.prod.yml
+    env_file: ${APP_ENV_FILE:-./infra/compose/.env}

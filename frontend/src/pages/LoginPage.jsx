@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { useAuth } from '../auth/AuthContext';
+import { useAuth } from '../auth/context';
 
 export default function LoginPage() {
   const { doLogin } = useAuth();
@@ -35,11 +35,11 @@ export default function LoginPage() {
     <div className="login-wrap">
       <form className="card login-card" onSubmit={onSubmit}>
         <h1>Đăng nhập</h1>
-        <label>Tài khoản
-          <input value={username} onChange={e => setUsername(e.target.value)} />
+        <label>Email
+          <input type="email" autoComplete="username" value={username} onChange={e => setUsername(e.target.value)} />
         </label>
         <label>Mật khẩu
-          <input type="password" value={password} onChange={e => setPassword(e.target.value)} />
+          <input type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} />
         </label>
         {serverErr && <p className="err">{serverErr}</p>}
         <button className="btn btn--primary" disabled={submitting}>

@@ -1,15 +1,18 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { 
-  getTicket, updateStatus, addComment, getHistory, assignTicket 
+  getTicket, updateStatus, addComment, assignTicket
 } from '../api/tickets';
-import { useAuth } from '../auth/AuthContext';
+import { useAuth } from '../auth/context';
 import { Loading, ErrorBox } from '../components/StateView';
 import { fmtDateTime, statusLabel, priorityLabel } from '../utils/format';
-import { api } from '../api/client'; // Thêm dòng này để dùng api.get
 
 export default function TicketDetailPage() {
   const { id } = useParams();
+  return <TicketDetail key={id} id={id} />;
+}
+
+function TicketDetail({ id }) {
   const nav = useNavigate();
   const { user } = useAuth(); // Lấy thông tin user để phân quyền giao diện
 
@@ -31,15 +34,10 @@ export default function TicketDetailPage() {
   const loadData = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      // Chạy song song 3 API để tăng tốc độ tải trang
-      const [ticketData, commentsData, historyData] = await Promise.all([
-        getTicket(id),
-        api.get(`/tickets/${id}/comments`).then(res => res.data).catch(() => []), // Gọi nhanh API comment
-        getHistory(id).catch(() => []) // Nếu API history lỗi, trả về mảng rỗng
-      ]);
+      const ticketData = await getTicket(id);
       setTicket(ticketData);
-      setComments(Array.isArray(commentsData) ? commentsData : commentsData.items || []);
-      setHistory(Array.isArray(historyData) ? historyData : historyData.items || []);
+      setComments(ticketData.comments);
+      setHistory(ticketData.history);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -47,7 +45,19 @@ export default function TicketDetailPage() {
     }
   }, [id]);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  useEffect(() => {
+    let active = true;
+    getTicket(id)
+      .then(data => {
+        if (!active) return;
+        setTicket(data);
+        setComments(data.comments);
+        setHistory(data.history);
+      })
+      .catch(error => { if (active) setError(error.message); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [id]);
 
   // Xử lý đổi trạng thái
   async function handleStatusChange(e) {
@@ -104,7 +114,8 @@ export default function TicketDetailPage() {
 
   // Phân quyền UI (Backend vẫn phải check lại)
   const role = user?.role?.toLowerCase() || 'requester';
-  const canChangeStatus = ['admin', 'agent'].includes(role);
+  const nextStatus = { open: 'in_progress', in_progress: 'resolved', resolved: 'closed' }[ticket.status];
+  const canChangeStatus = ['admin', 'technician'].includes(role) && Boolean(nextStatus);
   const canAssign = ['admin'].includes(role);
 
   return (
@@ -155,9 +166,7 @@ export default function TicketDetailPage() {
                   <label>Chuyển trạng thái:</label>
                   <select disabled={busy} onChange={handleStatusChange} value="">
                     <option value="">-- Chọn trạng thái mới --</option>
-                    <option value="open">Đang mở</option>
-                    <option value="in_progress">Đang xử lý</option>
-                    <option value="done">Hoàn thành</option>
+                    <option value={nextStatus}>{statusLabel(nextStatus)}</option>
                   </select>
                 </div>
               )}
@@ -205,6 +214,7 @@ export default function TicketDetailPage() {
             <form onSubmit={handleAddComment} className="comment-form">
               <textarea 
                 rows={3} 
+                maxLength={1000}
                 placeholder="Viết bình luận... (Ctrl+Enter để gửi)"
                 value={commentDraft}
                 onChange={e => setCommentDraft(e.target.value)}

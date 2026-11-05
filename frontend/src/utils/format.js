@@ -5,7 +5,7 @@ export function fmtDateTime(iso) {
   return d.toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' });
 }
 
-const STATUS_MAP = { open: 'Đang mở', in_progress: 'Đang xử lý', done: 'Hoàn thành' };
+const STATUS_MAP = { open: 'Đang mở', in_progress: 'Đang xử lý', resolved: 'Đã xử lý', closed: 'Đã đóng' };
 export const statusLabel = (s) => STATUS_MAP[s] || s || '—';
 
 const PRIORITY_MAP = { low: 'Thấp', medium: 'Trung bình', high: 'Cao', urgent: 'Khẩn cấp' };

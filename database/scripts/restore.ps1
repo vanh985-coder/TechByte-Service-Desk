@@ -1,40 +1,38 @@
-# ==============================================================================
-# PowerShell Script Restore Database — TechByte Service Desk (Windows)
-# ==============================================================================
-# Sử dụng: .\database\scripts\restore.ps1 -BackupFile .\database\backups\xxx.dump [-ContainerName database]
-# ==============================================================================
-
 param (
-    [Parameter(Mandatory=$true)]
+    [Parameter(Mandatory = $true)]
     [string]$BackupFile,
-    [string]$ContainerName = "database",
-    [string]$DbUser = "postgres",
-    [string]$DbName = "postgres"
+    [Parameter(Mandatory = $true)]
+    [ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9_.-]*$')]
+    [string]$ContainerName,
+    [string]$DbUser = $env:POSTGRES_USER,
+    [string]$DbName = $env:POSTGRES_DB
 )
-
-$ErrorActionPreference = "Stop"
-
-if (-not (Test-Path $BackupFile)) {
-    Write-Error "❌ Lỗi: File backup '$BackupFile' không tồn tại!"
+# --clean replaces objects in the explicitly selected lab target database.
+$ErrorActionPreference = 'Stop'
+if (-not (Test-Path -LiteralPath $BackupFile -PathType Leaf)) { throw 'Backup file does not exist.' }
+$running = docker inspect --format '{{.State.Running}}' $ContainerName
+if ($LASTEXITCODE -ne 0 -or $running -ne 'true') { throw 'Target container is not running.' }
+if (-not $DbUser) {
+    $value = docker exec $ContainerName printenv POSTGRES_USER
+    if ($LASTEXITCODE -gt 1) { throw 'Cannot read container database settings.' }
+    $DbUser = ($value -join '').Trim()
+    if (-not $DbUser) { $DbUser = 'postgres' }
 }
-
-Write-Host "==========================================================" -ForegroundColor Cyan
-Write-Host " [RESTORE] Phục hồi dữ liệu TechByte Service Desk" -ForegroundColor Cyan
-Write-Host " File nguồn : $BackupFile"
-Write-Host " Container  : $ContainerName"
-Write-Host " Database   : $DbName"
-Write-Host "==========================================================" -ForegroundColor Cyan
-
-# Đọc file dump và truyền vào stdin của docker exec pg_restore
-cmd /c "docker exec -i $ContainerName pg_restore -U $DbUser -d $DbName --clean --if-exists --no-owner --no-privileges -v < `"$BackupFile`""
-
-Write-Host "🔍 Kiểm tra lại số lượng bản ghi sau khi phục hồi:" -ForegroundColor Yellow
-docker exec -t $ContainerName psql -U $DbUser -d $DbName -c @"
-  SELECT 'users' AS bang, count(*) AS so_luong FROM users
-  UNION ALL SELECT 'tickets', count(*) FROM tickets
-  UNION ALL SELECT 'ticket_comments', count(*) FROM ticket_comments
-  UNION ALL SELECT 'ticket_history', count(*) FROM ticket_history;
-"@
-
-Write-Host "✅ [SUCCESS] Phục hồi dữ liệu hoàn tất thành công!" -ForegroundColor Green
-
+if (-not $DbName) {
+    $value = docker exec $ContainerName printenv POSTGRES_DB
+    if ($LASTEXITCODE -gt 1) { throw 'Cannot read container database settings.' }
+    $DbName = ($value -join '').Trim()
+    if (-not $DbName) { $DbName = $DbUser }
+}
+$temporaryFile = '/tmp/techbyte-restore-' + [guid]::NewGuid().ToString('N') + '.dump'
+try {
+    docker cp $BackupFile "${ContainerName}:$temporaryFile"
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot transfer backup to target container.' }
+    docker exec $ContainerName pg_restore --list $temporaryFile | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Invalid backup archive.' }
+    docker exec $ContainerName pg_restore -U $DbUser -d $DbName --clean --if-exists --no-owner --no-privileges --exit-on-error --single-transaction $temporaryFile
+    if ($LASTEXITCODE -ne 0) { throw 'Database restore failed.' }
+    Write-Output "Restore completed successfully in explicitly selected container: $ContainerName"
+} finally {
+    docker exec $ContainerName rm -f -- $temporaryFile | Out-Null
+}

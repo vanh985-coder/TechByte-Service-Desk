@@ -30,23 +30,25 @@
   .\database\scripts\backup.ps1
   ```
 
-File backup sẽ được lưu tự động tại thư mục `database/backups/techbyte_backup_YYYYMMDD_HHMMSS.dump`.
+File backup được lưu tại `database/backups/` với timestamp và hậu tố duy nhất.
+Script tự đọc user/database trong container; có thể đặt `POSTGRES_USER` và
+`POSTGRES_DB` để ghi đè khi cần. PowerShell dùng `docker cp` để giữ nguyên byte.
 
 ### Cách 2: Thực hiện thủ công bằng lệnh Docker
 
 ```bash
-docker exec -t database pg_dump \
-  -U postgres \
-  -d postgres \
-  -F c \
-  -b \
-  -v > techbyte_backup_$(date +%Y%m%d_%H%M%S).dump
+docker exec database sh -c \
+  'exec pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc -b' \
+  > techbyte_backup_$(date +%Y%m%d_%H%M%S).dump
 ```
 
 *Giải thích cờ lệnh:*
 - `-F c`: Định dạng nén Custom Binary của PostgreSQL, nén tối ưu, hỗ trợ phục hồi đa luồng và chọn lọc bảng.
 - `-b`: Bao gồm dữ liệu Large Objects (nếu có).
 - `-v`: Verbose mode ghi lại chi tiết các bước.
+
+Không dùng `-t` khi chuyển dump nhị phân. Các script restore yêu cầu chỉ định rõ
+container lab và dừng ngay khi `pg_restore` lỗi; không báo thành công sau lỗi.
 
 ---
 

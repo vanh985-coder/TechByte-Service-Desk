@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
+    "test:ci": "node --test src/api/contracts.test.js",
     "preview": "vite preview"
   },
   "dependencies": {
