@@ -300,3 +300,160 @@ a:hover {
     flex-direction: column;
   }
 }
+/* ==========================================================================
+   9. FORM TẠO TICKET (Form Group, Input, Textarea)
+   ========================================================================== */
+.form-group {
+  margin-bottom: 20px;
+  display: flex;
+  flex-direction: column;
+}
+
+.form-group label {
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: #374151;
+}
+
+.form-group input, 
+.form-group textarea, 
+.form-group select {
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 15px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  background: #fff;
+}
+
+.form-group input:focus, 
+.form-group textarea:focus, 
+.form-group select:focus {
+  border-color: #1d4ed8;
+  box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.1);
+}
+
+.form-group textarea {
+  resize: vertical;
+  min-height: 120px;
+}
+
+.form-hint {
+  font-size: 12px;
+  color: #6b7280;
+  text-align: right;
+  margin-top: 4px;
+}
+
+.actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid #e5e7eb;
+}
+/* ==========================================================================
+   10. TRANG CHI TIẾT TICKET (2 Cột, Comments, Timeline)
+   ========================================================================== */
+.detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr; /* Chia làm 2 cột bằng nhau */
+  gap: 24px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .detail-grid { grid-template-columns: 1fr; } /* Màn hình nhỏ thì gộp 1 cột */
+}
+
+/* Danh sách key-value */
+.kv { display: grid; grid-template-columns: 140px 1fr; gap: 12px; margin-bottom: 24px; font-size: 15px;}
+.kv dt { color: #6b7280; font-weight: 500; }
+.kv dd { margin: 0; font-weight: 600; }
+
+.pre { white-space: pre-wrap; margin: 0; font-family: inherit; }
+
+.actions-box {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid #e5e7eb;
+}
+.actions-box h3 { margin-top: 0; margin-bottom: 16px; color: #1d4ed8; }
+
+/* Flash thông báo */
+.flash {
+  background: #ecfdf5;
+  color: #065f46;
+  padding: 12px 16px;
+  border-radius: 6px;
+  margin-bottom: 20px;
+  border: 1px solid #a7f3d0;
+  font-weight: 500;
+}
+
+/* Khung bình luận */
+.comment-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 24px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+.comment-item {
+  background: #f9fafb;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+}
+.comment-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 14px;
+  color: #4b5563;
+}
+.comment-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.comment-form textarea {
+  padding: 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  resize: vertical;
+  font-family: inherit;
+}
+
+/* Lịch sử (Timeline) */
+.timeline {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  border-left: 2px solid #e5e7eb;
+  margin-left: 8px;
+}
+.timeline li {
+  position: relative;
+  padding-left: 24px;
+  padding-bottom: 20px;
+}
+.timeline li:last-child { padding-bottom: 0; }
+.timeline-dot {
+  position: absolute;
+  left: -6px; /* Căn giữa đường kẻ dọc */
+  top: 4px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #1d4ed8;
+  border: 2px solid #fff;
+}
+.timeline-content {
+  background: #fff;
+  font-size: 14px;
+}
